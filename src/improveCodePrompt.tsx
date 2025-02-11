@@ -47,6 +47,9 @@ export class ImproveCodePrompt extends PromptElement<ImproveCodePromptProps, str
                         {guidance}
                         Format each suggestion on a new line prefixed with a hyphen (-).
                         If no improvements are needed, return "✓ Code follows best practices".
+                        Your answer needs to be wrapped in a comment format for the language of the 
+                        file you are analyzing (e.g., // for JavaScript, # for Python).
+                        Do not include ``` in your response.
                     </AssistantMessage>
                     <UserMessage priority={200}>
                         Here is the code to analyze:

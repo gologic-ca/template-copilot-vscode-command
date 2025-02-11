@@ -110,8 +110,12 @@ async function processFile(fileUri: vscode.Uri, chatModel: any) {
         chatModel
     );
 
-    const improvementComments = response.messages[response.messages.length - 1].content;
-    const improvedContent = addImprovementComments(text, improvementComments);
+    let responseText = '';
+    const chatRequest = await chatModel.sendRequest(response.messages);
+    for await (const token of chatRequest.text) {
+        responseText += token;
+    }
+    const improvedContent = addImprovementComments(text, responseText);
     
     await modifyFile(document, improvedContent);
     logger.appendLine(messages.improvementsAdded(fileUri.fsPath));

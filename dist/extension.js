@@ -3067,13 +3067,13 @@ var require_base = __commonJS({
     async function renderPrompt2(ctor, props, endpoint, tokenizerMetadata, progress, token, mode = "vscode") {
       let tokenizer = "countTokens" in tokenizerMetadata ? new tokenizer_1.AnyTokenizer((text, token2) => tokenizerMetadata.countTokens(text, token2)) : tokenizerMetadata;
       const renderer = new promptRenderer_1.PromptRenderer(endpoint, ctor, props, tokenizer);
-      let { messages, tokenCount, references } = await renderer.render(progress, token);
+      let { messages: messages2, tokenCount, references } = await renderer.render(progress, token);
       const metadatas = renderer.getAllMeta();
       const usedContext = renderer.getUsedContext();
       if (mode === "vscode") {
-        messages = toVsCodeChatMessages(messages);
+        messages2 = toVsCodeChatMessages(messages2);
       }
-      return { messages, tokenCount, metadatas, usedContext, references };
+      return { messages: messages2, tokenCount, metadatas, usedContext, references };
     }
     exports2.renderPrompt = renderPrompt2;
     exports2.contentType = "application/vnd.codechat.prompt+json.1";
@@ -3096,9 +3096,9 @@ var require_base = __commonJS({
       return renderer.renderElementJSON(token);
     }
     exports2.renderElementJSON = renderElementJSON;
-    function toVsCodeChatMessages(messages) {
+    function toVsCodeChatMessages(messages2) {
       const vscode4 = require("vscode");
-      return messages.map((m) => {
+      return messages2.map((m) => {
         switch (m.role) {
           case openai_1.ChatRole.Assistant:
             const message = vscode4.LanguageModelChatMessage.Assistant(m.content, m.name);
@@ -3139,23 +3139,43 @@ var vscode3 = __toESM(require("vscode"));
 
 // src/fileHandler.ts
 var vscode = __toESM(require("vscode"));
+var errors = {
+  fileNotFound: (path) => `File not found: ${path}`,
+  failedToWrite: (path) => `Failed to write to file: ${path}`,
+  failedToCreate: (path) => `Failed to create directory: ${path}`,
+  failedToList: (path) => `Failed to list directory contents: ${path}`,
+  invalidUri: "Invalid URI provided"
+};
 async function modifyFile(document, newContent) {
-  const edit = new vscode.WorkspaceEdit();
-  const fullRange = new vscode.Range(document.positionAt(0), document.positionAt(document.getText().length));
-  edit.replace(document.uri, fullRange, newContent);
-  await vscode.workspace.applyEdit(edit);
-  await document.save();
+  try {
+    const edit = new vscode.WorkspaceEdit();
+    const fullRange = new vscode.Range(
+      document.positionAt(0),
+      document.positionAt(document.getText().length)
+    );
+    edit.replace(document.uri, fullRange, newContent);
+    const success = await vscode.workspace.applyEdit(edit);
+    if (!success) {
+      throw new Error(errors.failedToWrite(document.uri.fsPath));
+    }
+    await document.save();
+  } catch (error) {
+    throw new Error(errors.failedToWrite(document.uri.fsPath));
+  }
 }
 async function listFiles(folderUri) {
-  const uris = [];
-  const entries = await vscode.workspace.fs.readDirectory(folderUri);
-  for (const [name, type] of entries) {
-    const entryUri = vscode.Uri.joinPath(folderUri, name);
-    if (type === vscode.FileType.File) {
-      uris.push(entryUri);
+  try {
+    const uris = [];
+    const entries = await vscode.workspace.fs.readDirectory(folderUri);
+    for (const [name, type] of entries) {
+      if (type === vscode.FileType.File) {
+        uris.push(vscode.Uri.joinPath(folderUri, name));
+      }
     }
+    return uris;
+  } catch (error) {
+    throw new Error(errors.failedToList(folderUri.fsPath));
   }
-  return uris;
 }
 
 // src/extension.ts
@@ -3164,74 +3184,141 @@ var import_prompt_tsx2 = __toESM(require_base());
 // src/improveCodePrompt.tsx
 var import_prompt_tsx = __toESM(require_base());
 var vscode2 = __toESM(require("vscode"));
+var DEFAULT_GUIDANCE = `
+- Use clear and descriptive variable/function names
+- Add proper documentation and comments
+- Follow consistent code style and formatting
+- Apply DRY (Don't Repeat Yourself) principles
+- Ensure proper error handling
+- Consider performance implications
+- Follow language-specific best practices
+`;
 var ImproveCodePrompt = class extends import_prompt_tsx.PromptElement {
+  /**
+   * Renders the prompt component
+   * @param state Current state
+   * @param sizing Prompt sizing information
+   * @returns JSX element
+   * @throws Error if rendering fails
+   */
   render(state, sizing) {
     try {
-      return /* @__PURE__ */ vscpp(vscppf, null, /* @__PURE__ */ vscpp(import_prompt_tsx.AssistantMessage, { priority: 300 }, 'Analyze the provided code and suggest concrete improvements to enhance readability, maintainability, and performance. List your suggestions, each on a new line prefixed with a hyphen (-). If no improvements are found, return "No improvements found."'), /* @__PURE__ */ vscpp(import_prompt_tsx.UserMessage, { priority: 200 }, "Here is the code to analyze:", /* @__PURE__ */ vscpp("br", null), /* @__PURE__ */ vscpp(import_prompt_tsx.TextChunk, null, this.props.content)));
+      const guidance = this.props.customGuidance || DEFAULT_GUIDANCE;
+      return /* @__PURE__ */ vscpp(vscppf, null, /* @__PURE__ */ vscpp(import_prompt_tsx.AssistantMessage, { priority: 300 }, "Analyze the provided code and suggest concrete improvements considering:", guidance, 'Format each suggestion on a new line prefixed with a hyphen (-). If no improvements are needed, return "\u2713 Code follows best practices". Your answer needs to be wrapped in a comment format for the language of the file you are analyzing (e.g., // for JavaScript, # for Python). Do not include ``` in your response.'), /* @__PURE__ */ vscpp(import_prompt_tsx.UserMessage, { priority: 200 }, "Here is the code to analyze:", /* @__PURE__ */ vscpp("br", null), /* @__PURE__ */ vscpp(import_prompt_tsx.TextChunk, null, this.sanitizeContent(this.props.content))));
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : "An unknown error occurred";
-      vscode2.window.showErrorMessage(`Error rendering ImproveCodePrompt: ${errorMessage}`);
-      throw new Error(`Failed to render ImproveCodePrompt: ${errorMessage}`);
+      this.handleError(error);
+      return null;
     }
+  }
+  /**
+   * Sanitizes the input content to prevent rendering issues
+   * @param content Raw content
+   * @returns Sanitized content
+   */
+  sanitizeContent(content) {
+    if (!content?.trim()) {
+      return "// No content provided";
+    }
+    return content;
+  }
+  /**
+   * Handles errors in a consistent way
+   * @param error The error that occurred
+   */
+  handleError(error) {
+    const errorMessage = error instanceof Error ? error.message : "An unknown error occurred";
+    vscode2.window.showErrorMessage(`ImproveCodePrompt Error: ${errorMessage}`);
+    throw new Error(`ImproveCodePrompt rendering failed: ${errorMessage}`);
   }
 };
 
 // src/extension.ts
-var logger = vscode3.window.createOutputChannel("Thymeleaf Migration");
+var EXTENSION_OUTPUT_CHANNEL = "Code Improvement Assistant";
+var logger = vscode3.window.createOutputChannel(EXTENSION_OUTPUT_CHANNEL);
+var messages = {
+  noFolderSelected: "No folder was selected",
+  noChatModelAvailable: "No chat model is available",
+  processingFolder: (path) => `Processing folder: ${path}`,
+  processingFile: (path) => `Processing file: ${path}`,
+  sendingPrompt: (path) => `Sending prompt for ${path}...`,
+  improvementsAdded: (path) => `Improvements added to: ${path}`,
+  error: (path, error) => `Error processing ${path}: ${error}`,
+  selectFolderPrompt: "Select folder to analyze"
+};
 function activate(context) {
-  context.subscriptions.push(
-    vscode3.commands.registerCommand("extension.suggestCodeImprovements", async () => {
-      const folderUris = await vscode3.window.showOpenDialog({
-        canSelectFolders: true,
-        canSelectFiles: false,
-        openLabel: "Select folder to improve code"
-      });
-      if (folderUris && folderUris.length > 0) {
-        await suggestImprovementsInFolder(folderUris[0]);
-      } else {
-        vscode3.window.showErrorMessage("Aucun dossier s\xE9lectionn\xE9");
-      }
-    })
-  );
+  logger.appendLine("Extension activated");
+  const disposable = vscode3.commands.registerCommand("extension.suggestCodeImprovements", handleSuggestCodeImprovements);
+  context.subscriptions.push(disposable);
 }
-async function suggestImprovementsInFolder(folderUri) {
-  const chatModels = await vscode3.lm.selectChatModels({ id: "o3-mini" });
-  if (chatModels.length === 0) {
-    vscode3.window.showErrorMessage("Aucun mod\xE8le de chat disponible");
+async function handleSuggestCodeImprovements() {
+  const folderUris = await vscode3.window.showOpenDialog({
+    canSelectFolders: true,
+    canSelectFiles: false,
+    openLabel: messages.selectFolderPrompt
+  });
+  if (!folderUris?.length) {
+    vscode3.window.showErrorMessage(messages.noFolderSelected);
     return;
   }
-  const chatModel = chatModels[0];
-  logger.appendLine(chatModel.maxInputTokens.toString());
-  logger.appendLine(`Traitement du dossier : ${folderUri.fsPath}`);
-  const fileUris = await listFiles(folderUri);
-  logger.appendLine(`${fileUris.length} fichiers trouv\xE9s`);
+  await suggestImprovementsInFolder(folderUris[0]);
+}
+async function suggestImprovementsInFolder(folderUri) {
+  try {
+    const chatModels = await vscode3.lm.selectChatModels({ id: "o3-mini" });
+    if (!chatModels.length) {
+      vscode3.window.showErrorMessage(messages.noChatModelAvailable);
+      return;
+    }
+    const chatModel = chatModels[0];
+    logger.appendLine(messages.processingFolder(folderUri.fsPath));
+    const fileUris = await listFiles(folderUri);
+    await processFiles(fileUris, chatModel);
+  } catch (error) {
+    handleError(error, folderUri.fsPath);
+  }
+}
+async function processFiles(fileUris, chatModel) {
   for (const fileUri of fileUris) {
     try {
-      const document = await vscode3.workspace.openTextDocument(fileUri);
-      const text = document.getText();
-      logger.appendLine(`Traitement du fichier : ${fileUri.fsPath}`);
-      logger.appendLine(`Envoi du prompt pour ${fileUri.fsPath}\u2026`);
-      const response = await (0, import_prompt_tsx2.renderPrompt)(
-        ImproveCodePrompt,
-        { content: text },
-        { modelMaxPromptTokens: chatModel.maxInputTokens },
-        chatModel
-      );
-      const improvementComments = response.messages[response.messages.length - 1].content;
-      const improvedContent = addImprovementComments(text, improvementComments);
-      await modifyFile(document, improvedContent);
-      logger.appendLine(`Am\xE9liorations ajout\xE9es \xE0 : ${fileUri.fsPath}`);
+      await processFile(fileUri, chatModel);
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : "Erreur inconnue";
-      logger.appendLine(`Erreur sur ${fileUri.fsPath} : ${errorMessage}`);
+      handleError(error, fileUri.fsPath);
     }
   }
 }
+async function processFile(fileUri, chatModel) {
+  const document = await vscode3.workspace.openTextDocument(fileUri);
+  const text = document.getText();
+  logger.appendLine(messages.processingFile(fileUri.fsPath));
+  logger.appendLine(messages.sendingPrompt(fileUri.fsPath));
+  const response = await (0, import_prompt_tsx2.renderPrompt)(
+    ImproveCodePrompt,
+    { content: text },
+    { modelMaxPromptTokens: chatModel.maxInputTokens },
+    chatModel
+  );
+  let responseText = "";
+  const chatRequest = await chatModel.sendRequest(response.messages);
+  for await (const token of chatRequest.text) {
+    responseText += token;
+  }
+  const improvedContent = addImprovementComments(text, responseText);
+  await modifyFile(document, improvedContent);
+  logger.appendLine(messages.improvementsAdded(fileUri.fsPath));
+}
 function addImprovementComments(text, improvementComments) {
-  return improvementComments + "\n\n" + text;
+  return `${improvementComments}
+
+${text}`;
+}
+function handleError(error, context) {
+  const errorMessage = error instanceof Error ? error.message : "Unknown error";
+  logger.appendLine(messages.error(context, errorMessage));
+  vscode3.window.showErrorMessage(messages.error(context, errorMessage));
 }
 function deactivate() {
-  logger.appendLine("Extension d\xE9sactiv\xE9e");
+  logger.appendLine("Extension deactivated");
+  logger.dispose();
 }
 // Annotate the CommonJS export names for ESM import in node:
 0 && (module.exports = {
